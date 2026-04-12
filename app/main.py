@@ -369,7 +369,7 @@ def sms_webhook(
     target = _amount_key(body.amount)
     
     # Log the incoming payload
-    logger.info(f"[WEBHOOK] Received SMS Sync: amount={body.amount}, utr={body.utr}")
+    print(f"[WEBHOOK] Received SMS Sync: amount={body.amount}, utr={body.utr}", flush=True)
     
     col = db.collection(ORDERS)
     # Use modern FieldFilter to prevent UserWarning
@@ -384,7 +384,7 @@ def sms_webhook(
         doc.reference.update({"status": "Paid", "utr_number": body.utr.strip()})
         
         # Log success
-        logger.info(f"[WEBHOOK] SUCCESS: Marked order {doc.id} as Paid for amount {target}!")
+        print(f"[WEBHOOK] SUCCESS: Marked order {doc.id} as Paid for amount {target}!", flush=True)
         
         return SmsWebhookResponse(
             matched=True,
@@ -393,7 +393,7 @@ def sms_webhook(
         )
         
     # Log failure
-    logger.warning(f"[WEBHOOK] FAILED: No pending order found matching amount {target}.")
+    print(f"[WEBHOOK] FAILED: No pending order found matching amount {target}.", flush=True)
     
     return SmsWebhookResponse(
         matched=False,
