@@ -37,6 +37,11 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="FlowPay API", lifespan=lifespan)
 
+import logging
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from fastapi import Request
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -44,6 +49,19 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+logger = logging.getLogger("uvicorn.error")
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    body = await request.body()
+    decoded = body.decode("utf-8", errors="replace")
+    logger.error(f"[WEBHOOK 422 ERROR] Raw body received: {decoded}")
+    logger.error(f"[WEBHOOK 422 ERROR] Validation details: {exc.errors()}")
+    return JSONResponse(
+        status_code=422,
+        content={"detail": exc.errors(), "body_received": decoded},
+    )
 
 
 def _amount_key(d: Decimal) -> str:
