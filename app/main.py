@@ -343,6 +343,10 @@ def sms_webhook(
 ):
     db = get_firestore()
     target = _amount_key(body.amount)
+    
+    # Log the incoming payload
+    print(f"\n[WEBHOOK] Received SMS Sync: amount={body.amount}, utr={body.utr}")
+    
     col = db.collection(ORDERS)
     q = col.where("status", "==", "Pending")
     for doc in q.stream():
@@ -353,11 +357,19 @@ def sms_webhook(
             if data.get("merchant_id") != body.merchant_id:
                 continue
         doc.reference.update({"status": "Paid", "utr_number": body.utr.strip()})
+        
+        # Log success
+        print(f"[WEBHOOK] SUCCESS: Marked order {doc.id} as Paid for amount {target}!\n")
+        
         return SmsWebhookResponse(
             matched=True,
             order_id=doc.id,
             message="Order marked paid",
         )
+        
+    # Log failure
+    print(f"[WEBHOOK] FAILED: No pending order found matching amount {target}.\n")
+    
     return SmsWebhookResponse(
         matched=False,
         order_id=None,
