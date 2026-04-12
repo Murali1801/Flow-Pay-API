@@ -4,9 +4,34 @@ from typing import Optional
 from pydantic import BaseModel, Field
 
 
+class CustomerDetails(BaseModel):
+    name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+
+
+class ShippingAddress(BaseModel):
+    full_name: str
+    address_line_1: str
+    address_line_2: Optional[str] = None
+    city: str
+    state: str
+    pincode: str
+
+
+class OrderItem(BaseModel):
+    name: str
+    quantity: int
+    price: Decimal
+    image: Optional[str] = None
+
+
 class CheckoutRequest(BaseModel):
     amount: Decimal = Field(..., gt=0, examples=[Decimal("500.00")])
     merchant_id: Optional[str] = Field(None, description="Website / merchant id when using API key")
+    customer_details: Optional[CustomerDetails] = None
+    shipping_address: Optional[ShippingAddress] = None
+    items: Optional[list[OrderItem]] = None
 
 
 class CheckoutResponse(BaseModel):
@@ -20,6 +45,9 @@ class OrderResponse(BaseModel):
     status: str
     utr_number: str | None = None
     merchant_id: str | None = None
+    customer_details: Optional[CustomerDetails] = None
+    shipping_address: Optional[ShippingAddress] = None
+    items: Optional[list[OrderItem]] = None
 
 
 class SmsWebhookBody(BaseModel):

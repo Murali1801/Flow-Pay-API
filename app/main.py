@@ -456,6 +456,13 @@ def checkout(
     }
     if merchant_id:
         payload["merchant_id"] = merchant_id
+    if body.customer_details:
+        payload["customer_details"] = body.customer_details.model_dump()
+    if body.shipping_address:
+        payload["shipping_address"] = body.shipping_address.model_dump()
+    if body.items:
+        payload["items"] = [item.model_dump(mode="json") for item in body.items]
+
     db.collection(ORDERS).document(order_id).set(payload)
     return CheckoutResponse(order_id=order_id, amount=amount_str)
 
@@ -474,6 +481,9 @@ def get_order(order_id: str):
         status=str(data.get("status", "Pending")),
         utr_number=str(utr) if utr is not None else None,
         merchant_id=data.get("merchant_id"),
+        customer_details=data.get("customer_details"),
+        shipping_address=data.get("shipping_address"),
+        items=data.get("items"),
     )
 
 
