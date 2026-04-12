@@ -47,12 +47,21 @@ class MerchantCreate(BaseModel):
     domain: str = Field(..., min_length=1, max_length=200)
 
 
+class MerchantUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=120)
+    domain: Optional[str] = Field(None, min_length=1, max_length=200)
+    upi_id: Optional[str] = Field(None, max_length=100, description="UPI ID to receive payments")
+    upi_name: Optional[str] = Field(None, max_length=100, description="Payee display name")
+
+
 class MerchantResponse(BaseModel):
     merchant_id: str
     name: str
     domain: str
     api_key: str
     created_at: str | None = None
+    upi_id: str | None = None
+    upi_name: str | None = None
 
 
 class MerchantSummary(BaseModel):
@@ -76,3 +85,17 @@ class AdminOrderRow(BaseModel):
     utr_number: str | None = None
     merchant_id: str | None = None
     created_at: str | None = None
+
+
+class AnalyticsDayRow(BaseModel):
+    date: str
+    orders: int
+    paid: int
+    revenue: str
+
+
+class AnalyticsResponse(BaseModel):
+    days: list[AnalyticsDayRow]
+    conversion_rate: str
+    avg_order_value: str
+    total_revenue: str

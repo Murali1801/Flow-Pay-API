@@ -1,6 +1,7 @@
 import secrets
 import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Optional
 
@@ -13,11 +14,14 @@ from app.deps import get_current_user, is_admin_uid
 from app.firebase_app import get_firestore
 from app.schemas import (
     AdminOrderRow,
+    AnalyticsDayRow,
+    AnalyticsResponse,
     CheckoutRequest,
     CheckoutResponse,
     MerchantCreate,
     MerchantResponse,
     MerchantSummary,
+    MerchantUpdate,
     OrderResponse,
     SmsWebhookBody,
     SmsWebhookResponse,
@@ -35,7 +39,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="FlowPay API", lifespan=lifespan)
+app = FastAPI(title="FlowPay API", version="2.0.0", lifespan=lifespan)
 
 import logging
 from fastapi.exceptions import RequestValidationError
@@ -52,6 +56,7 @@ app.add_middleware(
 
 logger = logging.getLogger("uvicorn.error")
 
+
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     body = await request.body()
@@ -62,6 +67,17 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         status_code=422,
         content={"detail": exc.errors(), "body_received": decoded},
     )
+
+
+# ─── Health ─────────────────────────────────────────────────────
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok", "version": "2.0.0"}
+
+
+# ─── Helpers ─────────────────────────────────────────────────────────
 
 
 def _amount_key(d: Decimal) -> str:
@@ -87,6 +103,9 @@ def _resolve_merchant_from_api_key(db, api_key: str | None) -> tuple[Optional[st
         raise HTTPException(status_code=401, detail="Invalid API key")
     doc = docs[0]
     return doc.id, doc.to_dict()
+
+
+# ─── Auth ────────────────────────────────────────────────────────
 
 
 @app.post("/api/auth/bootstrap", response_model=UserBootstrapResponse)
@@ -128,6 +147,9 @@ def me(user: dict = Depends(get_current_user)):
     return UserBootstrapResponse(uid=user["uid"], email=user.get("email"), role=role)
 
 
+# ─── Merchants ────────────────────────────────────────────────────
+
+
 @app.post("/api/merchants", response_model=MerchantResponse)
 def create_merchant(body: MerchantCreate, user: dict = Depends(get_current_user)):
     db = get_firestore()
@@ -156,6 +178,39 @@ def create_merchant(body: MerchantCreate, user: dict = Depends(get_current_user)
         domain=body.domain.strip().lower(),
         api_key=api_key,
         created_at=None,
+    )
+
+
+@app.patch("/api/merchants/{merchant_id}", response_model=MerchantResponse)
+def update_merchant(merchant_id: str, body: MerchantUpdate, user: dict = Depends(get_current_user)):
+    db = get_firestore()
+    ref = db.collection(MERCHANTS).document(merchant_id)
+    doc = ref.get()
+    if not doc.exists:
+        raise HTTPException(status_code=404, detail="Merchant not found")
+    d = doc.to_dict() or {}
+    if d.get("owner_uid") != user["uid"] and not is_admin_uid(user["uid"], admin_uid_set()):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    updates: dict = {}
+    if body.name is not None:
+        updates["name"] = body.name.strip()
+    if body.domain is not None:
+        updates["domain"] = body.domain.strip().lower()
+    if body.upi_id is not None:
+        updates["upi_id"] = body.upi_id.strip()
+    if body.upi_name is not None:
+        updates["upi_name"] = body.upi_name.strip()
+    if updates:
+        ref.update(updates)
+        d.update(updates)
+    return MerchantResponse(
+        merchant_id=merchant_id,
+        name=str(d.get("name", "")),
+        domain=str(d.get("domain", "")),
+        api_key=str(d.get("api_key", "")),
+        created_at=_fmt_ts(d.get("created_at")),
+        upi_id=d.get("upi_id"),
+        upi_name=d.get("upi_name"),
     )
 
 
@@ -229,6 +284,9 @@ def rotate_api_key(merchant_id: str, user: dict = Depends(get_current_user)):
     )
 
 
+# ─── Orders helpers ───────────────────────────────────────────────
+
+
 def _merchant_ids_visible(user: dict) -> Optional[list[str]]:
     """None means all merchants (platform admin)."""
     if is_admin_uid(user["uid"], admin_uid_set()):
@@ -259,6 +317,9 @@ def _orders_for_user(db, user: dict, limit: int = 500):
     return rows
 
 
+# ─── Stats ──────────────────────────────────────────────────────
+
+
 @app.get("/api/admin/stats", response_model=StatsResponse)
 def admin_stats(user: dict = Depends(get_current_user)):
     db = get_firestore()
@@ -283,6 +344,74 @@ def admin_stats(user: dict = Depends(get_current_user)):
     )
 
 
+# ─── Analytics ───────────────────────────────────────────────────
+
+
+@app.get("/api/admin/analytics", response_model=AnalyticsResponse)
+def admin_analytics(days: int = 7, user: dict = Depends(get_current_user)):
+    if days not in (7, 30):
+        days = 7
+    db = get_firestore()
+    rows = _orders_for_user(db, user, limit=2000)
+
+    now = datetime.now(tz=timezone.utc)
+    day_map: dict[str, dict] = {}
+    for i in range(days):
+        d = (now - timedelta(days=days - 1 - i)).strftime("%Y-%m-%d")
+        day_map[d] = {"orders": 0, "paid": 0, "revenue": Decimal("0")}
+
+    total_revenue = Decimal("0")
+    paid_count = 0
+
+    for _, data in rows:
+        ts = data.get("created_at")
+        if ts is None:
+            continue
+        try:
+            if hasattr(ts, "astimezone"):
+                date_str = ts.astimezone(timezone.utc).strftime("%Y-%m-%d")
+            else:
+                date_str = str(ts)[:10]
+        except Exception:
+            continue
+        if date_str not in day_map:
+            continue
+        day_map[date_str]["orders"] += 1
+        st = data.get("status", "Pending")
+        if st == "Paid":
+            day_map[date_str]["paid"] += 1
+            paid_count += 1
+            try:
+                amt = Decimal(str(data.get("amount", "0")))
+                day_map[date_str]["revenue"] += amt
+                total_revenue += amt
+            except Exception:
+                pass
+
+    total_orders = len(rows)
+    conv = f"{round((paid_count / total_orders) * 100)}%" if total_orders else "0%"
+    avg_ov = (total_revenue / paid_count).quantize(Decimal("0.01")) if paid_count else Decimal("0")
+
+    day_rows = [
+        AnalyticsDayRow(
+            date=d,
+            orders=v["orders"],
+            paid=v["paid"],
+            revenue=f"{v['revenue'].quantize(Decimal('0.01')):.2f}",
+        )
+        for d, v in sorted(day_map.items())
+    ]
+    return AnalyticsResponse(
+        days=day_rows,
+        conversion_rate=conv,
+        avg_order_value=f"{avg_ov:.2f}",
+        total_revenue=f"{total_revenue.quantize(Decimal('0.01')):.2f}",
+    )
+
+
+# ─── Orders ──────────────────────────────────────────────────────
+
+
 @app.get("/api/admin/orders", response_model=list[AdminOrderRow])
 def admin_orders(user: dict = Depends(get_current_user)):
     db = get_firestore()
@@ -302,6 +431,9 @@ def admin_orders(user: dict = Depends(get_current_user)):
     return out
 
 
+# ─── Checkout ────────────────────────────────────────────────────
+
+
 @app.post("/api/checkout", response_model=CheckoutResponse)
 def checkout(
     body: CheckoutRequest,
@@ -314,9 +446,6 @@ def checkout(
             raise HTTPException(status_code=400, detail="X-API-Key required when merchant_id is sent")
         if merchant_id != body.merchant_id:
             raise HTTPException(status_code=403, detail="merchant_id does not match API key")
-    elif merchant_id:
-        # Key identifies merchant; optional body merchant_id must match
-        pass
     order_id = str(uuid.uuid4())
     amount_str = _amount_key(body.amount)
     payload = {
@@ -348,17 +477,19 @@ def get_order(order_id: str):
     )
 
 
+# ─── Webhook ─────────────────────────────────────────────────────
+
+
 def verify_webhook_auth(authorization: str | None = Header(None)):
     expected = f"Bearer {settings.webhook_bearer_token}"
     if not authorization or authorization != expected:
         raise HTTPException(status_code=401, detail="Invalid or missing Authorization")
 
 
-import logging
-
-logger = logging.getLogger("uvicorn.error")
-
 from google.cloud.firestore_v1.base_query import FieldFilter
+
+logger2 = logging.getLogger("uvicorn.error")
+
 
 @app.post("/api/webhook/sms-sync", response_model=SmsWebhookResponse)
 def sms_webhook(
@@ -367,12 +498,9 @@ def sms_webhook(
 ):
     db = get_firestore()
     target = _amount_key(body.amount)
-    
-    # Log the incoming payload
-    print(f"[WEBHOOK] Received SMS Sync: amount={body.amount}, utr={body.utr}", flush=True)
-    
+    logger2.info(f"[WEBHOOK] Received SMS Sync: amount={body.amount}, utr={body.utr}")
+
     col = db.collection(ORDERS)
-    # Use modern FieldFilter to prevent UserWarning
     q = col.where(filter=FieldFilter("status", "==", "Pending"))
     for doc in q.stream():
         data = doc.to_dict() or {}
@@ -382,21 +510,8 @@ def sms_webhook(
             if data.get("merchant_id") != body.merchant_id:
                 continue
         doc.reference.update({"status": "Paid", "utr_number": body.utr.strip()})
-        
-        # Log success
-        print(f"[WEBHOOK] SUCCESS: Marked order {doc.id} as Paid for amount {target}!", flush=True)
-        
-        return SmsWebhookResponse(
-            matched=True,
-            order_id=doc.id,
-            message="Order marked paid",
-        )
-        
-    # Log failure
-    print(f"[WEBHOOK] FAILED: No pending order found matching amount {target}.", flush=True)
-    
-    return SmsWebhookResponse(
-        matched=False,
-        order_id=None,
-        message="No pending order with this amount",
-    )
+        logger2.info(f"[WEBHOOK] SUCCESS: Order {doc.id} marked Paid for ₹{target}")
+        return SmsWebhookResponse(matched=True, order_id=doc.id, message="Order marked paid")
+
+    logger2.warning(f"[WEBHOOK] No pending order found for ₹{target}")
+    return SmsWebhookResponse(matched=False, order_id=None, message="No pending order with this amount")
