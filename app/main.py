@@ -336,6 +336,10 @@ def verify_webhook_auth(authorization: str | None = Header(None)):
         raise HTTPException(status_code=401, detail="Invalid or missing Authorization")
 
 
+import logging
+
+logger = logging.getLogger("uvicorn.error")
+
 @app.post("/api/webhook/sms-sync", response_model=SmsWebhookResponse)
 def sms_webhook(
     body: SmsWebhookBody,
@@ -345,7 +349,7 @@ def sms_webhook(
     target = _amount_key(body.amount)
     
     # Log the incoming payload
-    print(f"\n[WEBHOOK] Received SMS Sync: amount={body.amount}, utr={body.utr}")
+    logger.info(f"[WEBHOOK] Received SMS Sync: amount={body.amount}, utr={body.utr}")
     
     col = db.collection(ORDERS)
     q = col.where("status", "==", "Pending")
@@ -359,7 +363,7 @@ def sms_webhook(
         doc.reference.update({"status": "Paid", "utr_number": body.utr.strip()})
         
         # Log success
-        print(f"[WEBHOOK] SUCCESS: Marked order {doc.id} as Paid for amount {target}!\n")
+        logger.info(f"[WEBHOOK] SUCCESS: Marked order {doc.id} as Paid for amount {target}!")
         
         return SmsWebhookResponse(
             matched=True,
@@ -368,7 +372,7 @@ def sms_webhook(
         )
         
     # Log failure
-    print(f"[WEBHOOK] FAILED: No pending order found matching amount {target}.\n")
+    logger.warning(f"[WEBHOOK] FAILED: No pending order found matching amount {target}.")
     
     return SmsWebhookResponse(
         matched=False,
