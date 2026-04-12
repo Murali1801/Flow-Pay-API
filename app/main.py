@@ -358,6 +358,8 @@ import logging
 
 logger = logging.getLogger("uvicorn.error")
 
+from google.cloud.firestore_v1.base_query import FieldFilter
+
 @app.post("/api/webhook/sms-sync", response_model=SmsWebhookResponse)
 def sms_webhook(
     body: SmsWebhookBody,
@@ -370,7 +372,8 @@ def sms_webhook(
     logger.info(f"[WEBHOOK] Received SMS Sync: amount={body.amount}, utr={body.utr}")
     
     col = db.collection(ORDERS)
-    q = col.where("status", "==", "Pending")
+    # Use modern FieldFilter to prevent UserWarning
+    q = col.where(filter=FieldFilter("status", "==", "Pending"))
     for doc in q.stream():
         data = doc.to_dict() or {}
         if data.get("amount") != target:
