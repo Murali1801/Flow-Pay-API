@@ -519,9 +519,7 @@ def sms_webhook(
     body: SmsWebhookBody,
     _auth: None = Depends(verify_webhook_auth),
 ):
-    db = get_firestore()
-    target = _amount_key(body.amount)
-    logger2.info(f"[WEBHOOK] Received SMS Sync: amount={body.amount}, utr={body.utr}")
+    logger2.info(f"[WEBHOOK] Received SMS Sync Payload: {body.model_dump()}")
 
     col = db.collection(ORDERS)
     q = col.where(filter=FieldFilter("status", "==", "Pending"))
