@@ -32,11 +32,13 @@ class CheckoutRequest(BaseModel):
     customer_details: Optional[CustomerDetails] = None
     shipping_address: Optional[ShippingAddress] = None
     items: Optional[list[OrderItem]] = None
+    return_url: Optional[str] = Field(None, description="URL to redirect after payment (e.g. brochure /orders page)")
 
 
 class CheckoutResponse(BaseModel):
     order_id: str
     amount: str
+    return_url: Optional[str] = None
 
 
 class OrderResponse(BaseModel):
@@ -48,6 +50,7 @@ class OrderResponse(BaseModel):
     customer_details: Optional[CustomerDetails] = None
     shipping_address: Optional[ShippingAddress] = None
     items: Optional[list[OrderItem]] = None
+    return_url: Optional[str] = None
 
 
 class SmsWebhookBody(BaseModel):

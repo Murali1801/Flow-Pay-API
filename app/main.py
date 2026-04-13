@@ -462,9 +462,11 @@ def checkout(
         payload["shipping_address"] = body.shipping_address.model_dump()
     if body.items:
         payload["items"] = [item.model_dump(mode="json") for item in body.items]
+    if body.return_url:
+        payload["return_url"] = body.return_url.strip()
 
     db.collection(ORDERS).document(order_id).set(payload)
-    return CheckoutResponse(order_id=order_id, amount=amount_str)
+    return CheckoutResponse(order_id=order_id, amount=amount_str, return_url=body.return_url)
 
 
 @app.get("/api/orders/{order_id}", response_model=OrderResponse)
@@ -484,6 +486,7 @@ def get_order(order_id: str):
         customer_details=data.get("customer_details"),
         shipping_address=data.get("shipping_address"),
         items=data.get("items"),
+        return_url=data.get("return_url"),
     )
 
 
