@@ -495,8 +495,12 @@ def get_order(order_id: str):
 
 def verify_webhook_auth(authorization: str | None = Header(None)):
     expected = f"Bearer {settings.webhook_bearer_token}"
-    if not authorization or authorization != expected:
-        raise HTTPException(status_code=401, detail="Invalid or missing Authorization")
+    if not authorization:
+        logger2.error("[WEBHOOK AUTH] Missing Authorization header")
+        raise HTTPException(status_code=401, detail="Missing Authorization header")
+    if authorization != expected:
+        logger2.error(f"[WEBHOOK AUTH] Token mismatch. Received: {authorization[:15]}... Expected: {expected[:15]}...")
+        raise HTTPException(status_code=401, detail="Invalid Authorization")
 
 
 from google.cloud.firestore_v1.base_query import FieldFilter
