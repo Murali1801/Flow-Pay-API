@@ -494,12 +494,18 @@ def get_order(order_id: str):
 
 
 def verify_webhook_auth(authorization: str | None = Header(None)):
-    expected = f"Bearer {settings.webhook_bearer_token}"
+    # Get the raw secret from settings and the received header
+    raw_secret = settings.webhook_bearer_token.replace("Bearer ", "").strip()
+    
     if not authorization:
         logger2.error("[WEBHOOK AUTH] Missing Authorization header")
         raise HTTPException(status_code=401, detail="Missing Authorization header")
-    if authorization != expected:
-        logger2.error(f"[WEBHOOK AUTH] Token mismatch. Received: {authorization[:15]}... Expected: {expected[:15]}...")
+    
+    # Strip "Bearer " from the received header to get the actual token
+    received_token = authorization.replace("Bearer ", "").strip()
+    
+    if received_token != raw_secret:
+        logger2.error(f"[WEBHOOK AUTH] Token mismatch. Received: {received_token[:10]}... Expected: {raw_secret[:10]}...")
         raise HTTPException(status_code=401, detail="Invalid Authorization")
 
 
