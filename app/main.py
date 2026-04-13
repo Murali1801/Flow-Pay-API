@@ -519,6 +519,8 @@ def sms_webhook(
     body: SmsWebhookBody,
     _auth: None = Depends(verify_webhook_auth),
 ):
+    db = get_firestore()
+    target = _amount_key(body.amount)
     logger2.info(f"[WEBHOOK] Received SMS Sync Payload: {body.model_dump()}")
 
     col = db.collection(ORDERS)
